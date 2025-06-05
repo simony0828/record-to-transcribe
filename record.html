@@ -1,0 +1,126 @@
+<body>
+  <h1>Audio Recorder</h1>
+
+  <label for="action-select" style="margin-top: 20px;">Recording destination:</label>
+  <select id="action-select">
+    <option value="download">Download to Local</option>
+    <option value="upload">Upload to S3</option>
+  </select>
+
+  <br>
+
+  <label for="directory-input" style="margin-top: 10px;">S3 Directory (optional):</label>
+  <input type="text" id="directory-input" placeholder="e.g., dr-park/" value="dr-park/" />
+
+  <br>
+
+  <p>
+  <button id="start-recording">Start Recording</button>
+  <button id="stop-recording" disabled>Stop Recording</button>
+  </p>
+
+  <br>
+
+  <div class="status" id="status">Status: Ready to record</div>
+
+  <script src="https://sdk.amazonaws.com/js/aws-sdk-2.1377.0.min.js"></script>
+  <script>
+    let mediaRecorder;
+    let audioChunks = [];
+    let audioBlob;
+    let audioUrl;
+    let audioFile;
+
+    AWS.config.update({
+      region: 'us-west-2',
+      credentials: new AWS.CognitoIdentityCredentials({
+        IdentityPoolId: 'us-west-2:41c2a4e1-e77f-4be2-9ca1-b3c3e0891d16',
+      }),
+    });
+
+    const s3 = new AWS.S3();
+
+    const startButton = document.getElementById('start-recording');
+    const stopButton = document.getElementById('stop-recording');
+    const actionSelect = document.getElementById('action-select');
+    const directoryInput = document.getElementById('directory-input');
+    const statusDiv = document.getElementById('status');
+
+    async function startRecording() {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      audioChunks = [];
+
+      mediaRecorder.ondataavailable = event => {
+        audioChunks.push(event.data);
+      };
+
+      mediaRecorder.onstop = () => {
+        //audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+        //const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        //audioUrl = URL.createObjectURL(audioBlob);
+        //audioFile = new File([audioBlob], `audio-${timestamp}.wav`, { type: 'audio/wav' });
+        audioBlob = new Blob(audioChunks, { type: 'audio/mp4' });
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        audioUrl = URL.createObjectURL(audioBlob);
+        audioFile = new File([audioBlob], `audio-${timestamp}.mp4`, { type: 'audio/mp4' });
+
+        const action = actionSelect.value;
+        const directory = directoryInput.value.trim() || 'dr-park/';
+        const sanitizedDir = directory.endsWith('/') ? directory : directory + '/';
+
+        if (action === 'download') {
+          downloadRecording();
+        } else {
+          uploadToS3(timestamp, sanitizedDir);
+        }
+
+        stopButton.disabled = true;
+        startButton.disabled = false;
+      };
+
+      mediaRecorder.start();
+      statusDiv.textContent = 'Status: Recording...';
+      stopButton.disabled = false;
+      startButton.disabled = true;
+    }
+
+    function stopRecording() {
+      mediaRecorder.stop();
+    }
+
+    function downloadRecording() {
+      const a = document.createElement('a');
+      a.href = audioUrl;
+      a.download = audioFile.name;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      statusDiv.textContent = 'Audio downloaded to local drive.';
+    }
+
+    function uploadToS3(timestamp, folderPath) {
+      const params = {
+        Bucket: 'piano-recordings-bucket',
+        Key: `${folderPath}audio-${timestamp}.wav`,
+        Body: audioFile,
+        ContentType: 'audio/wav',
+      };
+
+      statusDiv.textContent = 'Uploading to S3...';
+      s3.upload(params, function (err, data) {
+        if (err) {
+          console.error('Upload error:', err);
+          statusDiv.textContent = 'Error uploading audio.';
+        } else {
+          console.log('Upload successful:', data);
+          statusDiv.textContent = 'Audio uploaded successfully to S3.';
+        }
+      });
+    }
+
+    startButton.addEventListener('click', startRecording);
+    stopButton.addEventListener('click', stopRecording);
+  </script>
+</body>
